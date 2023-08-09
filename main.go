@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgstmt"
 	_ "github.com/lib/pq"
 	"github.com/moonrhythm/parapet"
@@ -58,7 +59,7 @@ func main() {
 
 	srv := parapet.NewBackend()
 	srv.Addr = ":" + port
-	srv.Use(&logger{db: db})
+	srv.Use(&logger{db: db, targetHost: upstreamHost})
 	srv.Use(&upstream.Upstream{
 		Transport: tr,
 		Host:      upstreamHost,
@@ -70,8 +71,9 @@ func main() {
 }
 
 type logger struct {
-	db *sql.DB
-	ch chan *logEntry
+	db         *sql.DB
+	ch         chan *logEntry
+	targetHost string
 }
 
 type logEntry struct {
@@ -110,7 +112,7 @@ func (l *logger) flushLoop() {
 			b.Into("request_logs")
 			b.Columns("request", "response", "ts")
 			for _, x := range buf {
-				b.Value(x.request, x.response, x.ts)
+				b.Value(pgsql.JSON(x.request), pgsql.JSON(x.response), x.ts)
 			}
 		}).ExecContext(ctx, l.db.ExecContext)
 		if err != nil {
@@ -174,6 +176,7 @@ func (l *logger) ServeHandler(h http.Handler) http.Handler {
 			l.ch <- &e
 		}()
 
+		r.URL.Host = l.targetHost
 		h.ServeHTTP(nw, r)
 	})
 }
